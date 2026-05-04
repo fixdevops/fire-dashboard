@@ -8,11 +8,44 @@ const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
 )
 
+type RtStatus = "connecting" | "connected" | "error"
+
+type LogRow = {
+  id: string
+  created_at: string
+  flame: boolean | null
+  relay: boolean | null
+  angle: number | null
+}
+
+function formatLogTime(iso: string) {
+  try {
+    return new Date(iso).toLocaleTimeString(undefined, {
+      hour12: false,
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+    })
+  } catch {
+    return iso
+  }
+}
+
+function buildLogLine(d: Pick<LogRow, "flame" | "relay" | "angle">) {
+  const head = d.flame ? "Api terdeteksi" : "Pemantauan"
+  const ang = d.angle ?? "—"
+  const pump = d.relay ? "pompa ON" : "pompa OFF"
+  return `${head} · ${ang}° · ${pump}`
+}
+
 export default function Page() {
   const [alarmPlayed, setAlarmPlayed] = useState(false)
   const [angle, setAngle] = useState(90)
   const [relay, setRelay] = useState(false)
   const [fire, setFire] = useState(false)
+  const [rtStatus, setRtStatus] = useState<RtStatus>("connecting")
+  const [logs, setLogs] = useState<LogRow[]>([])
+  const mountedRef = useRef(true)
 
   // 🔊 AUDIO FIX (ANTI BUG)
   const alarmRef = useRef<HTMLAudioElement | null>(null)
@@ -32,6 +65,13 @@ export default function Page() {
       })
     })
   }
+
+  useEffect(() => {
+    mountedRef.current = true
+    return () => {
+      mountedRef.current = false
+    }
+  }, [])
 
   useEffect(() => {
 
@@ -57,6 +97,7 @@ export default function Page() {
 
       if (error) {
         console.log("INIT ERROR:", error)
+        if (mountedRef.current) setRtStatus("error")
         return
       }
 
@@ -68,7 +109,22 @@ export default function Page() {
       }
     }
 
+    const fetchRecentLogs = async () => {
+      const { data, error } = await supabase
+        .from("fire_logs")
+        .select("id, created_at, flame, relay, angle")
+        .order("created_at", { ascending: false })
+        .limit(30)
+
+      if (error) {
+        console.log("LOGS ERROR:", error)
+        return
+      }
+      if (data && mountedRef.current) setLogs(data as LogRow[])
+    }
+
     fetchInitialData()
+    fetchRecentLogs()
 
     const handleRealtime = (payload: any) => {
       console.log("REALTIME:", payload)
@@ -79,6 +135,20 @@ export default function Page() {
       setAngle(d.angle ?? 90)
       setRelay(d.relay ?? false)
       setFire(d.flame ?? false)
+
+      if (payload.eventType === "INSERT" && d.id && d.created_at) {
+        const row: LogRow = {
+          id: d.id,
+          created_at: d.created_at,
+          flame: d.flame ?? null,
+          relay: d.relay ?? null,
+          angle: d.angle ?? null,
+        }
+        setLogs((prev) => {
+          if (prev.some((p) => p.id === row.id)) return prev
+          return [row, ...prev].slice(0, 40)
+        })
+      }
     }
 
     channel = supabase
@@ -92,8 +162,12 @@ export default function Page() {
         },
         handleRealtime
       )
-      .subscribe((status) => {
-        console.log("STATUS:", status)
+      .subscribe((status, err) => {
+        console.log("STATUS:", status, err)
+        if (!mountedRef.current) return
+        if (status === "SUBSCRIBED") setRtStatus("connected")
+        else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT")
+          setRtStatus("error")
       })
 
     return () => {
@@ -139,8 +213,18 @@ export default function Page() {
           Fire Fighter System Monitor
         </h1>
 
-        <div className="px-3 py-1 bg-green-100 text-green-600 rounded-full text-xs md:text-sm shadow-inner">
-          ✔ connected
+        <div
+          className={`px-3 py-1 rounded-full text-xs md:text-sm shadow-inner ${
+            rtStatus === "connected"
+              ? "bg-green-100 text-green-700"
+              : rtStatus === "error"
+                ? "bg-red-100 text-red-700"
+                : "bg-amber-100 text-amber-800"
+          }`}
+        >
+          {rtStatus === "connected" && "Realtime terhubung"}
+          {rtStatus === "connecting" && "Menghubungkan…"}
+          {rtStatus === "error" && "Koneksi bermasalah"}
         </div>
       </div>
 
@@ -176,7 +260,11 @@ export default function Page() {
         <div className="space-y-5">
 
           {/* FIRE ALERT */}
-          <div className="relative rounded-2xl p-4 md:p-5 text-white bg-red-500 shadow-lg overflow-hidden">
+          <div
+            className={`relative rounded-2xl p-4 md:p-5 shadow-lg overflow-hidden text-white ${
+              fire ? "bg-red-500" : "bg-emerald-600"
+            }`}
+          >
 
             {fire && (
               <div className="absolute inset-0 pointer-events-none">
@@ -190,7 +278,9 @@ export default function Page() {
             </p>
 
             <p className="font-semibold relative z-10 text-sm md:text-base">
-              🔥 FLAME DETECTED (Pin 34: LOW)
+              {fire
+                ? "Api terdeteksi · sensor pin 34 (aktif saat LOW)"
+                : "Kondisi aman · tidak ada deteksi api"}
             </p>
           </div>
 
@@ -234,12 +324,25 @@ export default function Page() {
             />
           </div>
 
-          {/* LED */}
+          {/* LED — ikuti data (api: seperti board kedip; pompa ON tanpa api: kuning) */}
           <div className="bg-[#eef1f5] rounded-2xl p-4 md:p-5 shadow-[8px_8px_16px_#d1d5db,-8px_-8px_16px_#ffffff] flex justify-between items-center">
 
             <span className="text-sm">LED Status</span>
 
-            <div className="w-10 h-10 rounded-full bg-green-400 shadow-[inset_0_0_10px_rgba(0,0,0,0.4),0_0_20px_rgba(0,255,0,0.6)]"></div>
+            <div className="flex flex-col items-end gap-1">
+              <div
+                className={`w-10 h-10 rounded-full shadow-[inset_0_0_10px_rgba(0,0,0,0.25)] ${
+                  fire
+                    ? "bg-red-500 shadow-[0_0_18px_rgba(239,68,68,0.85)] animate-pulse"
+                    : relay
+                      ? "bg-amber-400 shadow-[0_0_14px_rgba(251,191,36,0.7)]"
+                      : "bg-green-500 shadow-[0_0_12px_rgba(34,197,94,0.45)]"
+                }`}
+              />
+              <span className="text-[10px] text-gray-500 max-w-[140px] text-right leading-tight">
+                {fire ? "Indikasi alarm (data)" : relay ? "Pompa ON" : "Siaga"}
+              </span>
+            </div>
           </div>
 
         </div>
@@ -251,11 +354,18 @@ export default function Page() {
 
         <p className="text-xs md:text-sm text-gray-500 mb-2">Live Logs</p>
 
-        <div className="text-xs md:text-sm space-y-1">
-          <p>14:15:30 - System Initialized</p>
-          <p>14:15:35 - Scanning (0° to 180°)</p>
-          <p>14:15:40 - 🔥 API DETECTED at 125°</p>
-          <p>14:15:41 - Pump and LED Activated</p>
+        <div className="text-xs md:text-sm space-y-1 max-h-48 overflow-y-auto pr-1">
+          {logs.length === 0 ? (
+            <p className="text-gray-400">Belum ada data fire_logs.</p>
+          ) : (
+            logs.map((row) => (
+              <p key={row.id} className="tabular-nums">
+                <span className="text-gray-400">{formatLogTime(row.created_at)}</span>
+                {" — "}
+                {buildLogLine(row)}
+              </p>
+            ))
+          )}
         </div>
 
       </div>
