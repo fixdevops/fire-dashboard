@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState, useRef } from "react"
+import { useEffect, useState, useRef, useMemo } from "react"
 import { createClient } from "@supabase/supabase-js"
 
 const supabase = createClient(
@@ -38,6 +38,11 @@ function buildLogLine(d: Pick<LogRow, "flame" | "relay" | "angle">) {
   return `${head} · ${ang}° · ${pump}`
 }
 
+/** Jeda data fire_logs > ini dianggap ESP/WiFi putus (ESP kirim ~1×/detik). */
+const DEVICE_OFFLINE_AFTER_MS = 12_000
+
+type DeviceWifiStatus = "unknown" | "online" | "offline"
+
 export default function Page() {
   const [alarmPlayed, setAlarmPlayed] = useState(false)
   const [angle, setAngle] = useState(90)
@@ -45,26 +50,50 @@ export default function Page() {
   const [fire, setFire] = useState(false)
   const [rtStatus, setRtStatus] = useState<RtStatus>("connecting")
   const [logs, setLogs] = useState<LogRow[]>([])
+  const [tick, setTick] = useState(0)
+  const [wifiResetBusy, setWifiResetBusy] = useState(false)
+  const [wifiResetMsg, setWifiResetMsg] = useState<string | null>(null)
+  const [lastDeviceLogAt, setLastDeviceLogAt] = useState<string | null>(null)
   const mountedRef = useRef(true)
 
   // 🔊 AUDIO FIX (ANTI BUG)
   const alarmRef = useRef<HTMLAudioElement | null>(null)
 
   // 🔥 TAMBAHAN (TIDAK MENGUBAH UI)
-  const updateControl = async (data: any) => {
-    await fetch(`${process.env.NEXT_PUBLIC_SUPABASE_URL}/rest/v1/control?id=eq.1`, {
-      method: "PATCH",
-      headers: {
-        "Content-Type": "application/json",
-        "apikey": process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-        "Authorization": `Bearer ${process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY}`
-      },
-      body: JSON.stringify({
-        ...data,
-        updated_at: new Date().toISOString()
-      })
-    })
+  const updateControl = async (data: Record<string, unknown>) => {
+    const res = await fetch(
+      `${process.env.NEXT_PUBLIC_SUPABASE_URL}/rest/v1/control?id=eq.1`,
+      {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          "apikey": process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+          "Authorization": `Bearer ${process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY}`,
+        },
+        body: JSON.stringify({
+          ...data,
+          updated_at: new Date().toISOString(),
+        }),
+      }
+    )
+    return res.ok
   }
+
+  const bumpLastSeen = (createdAt: string | undefined) => {
+    if (createdAt) setLastDeviceLogAt(createdAt)
+  }
+
+  const deviceWifiStatus: DeviceWifiStatus = useMemo(() => {
+    if (!lastDeviceLogAt) return "unknown"
+    const age = Date.now() - new Date(lastDeviceLogAt).getTime()
+    if (age < DEVICE_OFFLINE_AFTER_MS) return "online"
+    return "offline"
+  }, [lastDeviceLogAt, tick])
+
+  useEffect(() => {
+    const id = window.setInterval(() => setTick((n) => n + 1), 2000)
+    return () => window.clearInterval(id)
+  }, [])
 
   useEffect(() => {
     mountedRef.current = true
@@ -106,6 +135,7 @@ export default function Page() {
         setAngle(d.angle ?? 90)
         setRelay(d.relay ?? false)
         setFire(d.flame ?? false)
+        bumpLastSeen(d.created_at as string | undefined)
       }
     }
 
@@ -120,7 +150,11 @@ export default function Page() {
         console.log("LOGS ERROR:", error)
         return
       }
-      if (data && mountedRef.current) setLogs(data as LogRow[])
+      if (data && mountedRef.current) {
+        setLogs(data as LogRow[])
+        const first = data[0] as LogRow | undefined
+        if (first?.created_at) bumpLastSeen(first.created_at)
+      }
     }
 
     fetchInitialData()
@@ -135,6 +169,7 @@ export default function Page() {
       setAngle(d.angle ?? 90)
       setRelay(d.relay ?? false)
       setFire(d.flame ?? false)
+      bumpLastSeen(d.created_at as string | undefined)
 
       if (payload.eventType === "INSERT" && d.id && d.created_at) {
         const row: LogRow = {
@@ -213,20 +248,67 @@ export default function Page() {
           Fire Fighter System Monitor
         </h1>
 
-        <div
-          className={`px-3 py-1 rounded-full text-xs md:text-sm shadow-inner ${
-            rtStatus === "connected"
-              ? "bg-green-100 text-green-700"
-              : rtStatus === "error"
-                ? "bg-red-100 text-red-700"
-                : "bg-amber-100 text-amber-800"
-          }`}
-        >
-          {rtStatus === "connected" && "Realtime terhubung"}
-          {rtStatus === "connecting" && "Menghubungkan…"}
-          {rtStatus === "error" && "Koneksi bermasalah"}
+        <div className="flex flex-wrap items-center gap-2 justify-end w-full md:w-auto">
+          <div
+            className={`px-3 py-1 rounded-full text-xs md:text-sm shadow-inner ${
+              rtStatus === "connected"
+                ? "bg-green-100 text-green-700"
+                : rtStatus === "error"
+                  ? "bg-red-100 text-red-700"
+                  : "bg-amber-100 text-amber-800"
+            }`}
+          >
+            {rtStatus === "connected" && "Realtime terhubung"}
+            {rtStatus === "connecting" && "Menghubungkan…"}
+            {rtStatus === "error" && "Koneksi bermasalah"}
+          </div>
+
+          <div
+            className={`px-3 py-1 rounded-full text-xs md:text-sm shadow-inner ${
+              deviceWifiStatus === "online"
+                ? "bg-sky-100 text-sky-800"
+                : deviceWifiStatus === "offline"
+                  ? "bg-orange-100 text-orange-800"
+                  : "bg-gray-100 text-gray-600"
+            }`}
+            title="Berdasarkan waktu terakhir data masuk ke fire_logs dari ESP (~1 detik)."
+          >
+            {deviceWifiStatus === "online" && "📶 Perangkat online"}
+            {deviceWifiStatus === "offline" && "📶 Perangkat offline"}
+            {deviceWifiStatus === "unknown" && "📶 Belum ada data ESP"}
+          </div>
+
+          <button
+            type="button"
+            disabled={wifiResetBusy}
+            onClick={async () => {
+              if (
+                !window.confirm(
+                  "Reset WiFi di ESP? Board akan hapus simpanan WiFi dan buka portal FIRE_SYSTEM (perlu firmware yang membaca kolom control.wifi_reset)."
+                )
+              )
+                return
+              setWifiResetBusy(true)
+              setWifiResetMsg(null)
+              const ok = await updateControl({ wifi_reset: true })
+              setWifiResetBusy(false)
+              setWifiResetMsg(
+                ok
+                  ? "Permintaan reset dikirim. ESP akan portal config jika firmware mendukung."
+                  : "Gagal kirim (cek kolom wifi_reset di tabel control + RLS)."
+              )
+              window.setTimeout(() => setWifiResetMsg(null), 8000)
+            }}
+            className="px-3 py-1 rounded-full text-xs md:text-sm bg-white border border-gray-300 text-gray-700 shadow-sm hover:bg-gray-50 disabled:opacity-50"
+          >
+            {wifiResetBusy ? "Mengirim…" : "Reset WiFi ESP"}
+          </button>
         </div>
       </div>
+
+      {wifiResetMsg && (
+        <p className="text-xs text-gray-600 mb-4 -mt-2 md:text-right">{wifiResetMsg}</p>
+      )}
 
       {/* GRID */}
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
