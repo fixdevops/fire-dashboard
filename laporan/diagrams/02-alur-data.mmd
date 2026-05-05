@@ -1,0 +1,17 @@
+sequenceDiagram
+  participant ESP as ESP32
+  participant API as Supabase REST
+  participant DB as Database
+  participant RT as Realtime
+  participant BR as Browser
+
+  ESP->>API: POST /fire_logs JSON
+  API->>DB: INSERT row
+  DB-->>RT: notify
+  RT-->>BR: event INSERT
+  BR->>BR: update UI angle relay flame
+
+  BR->>API: PATCH /control wifi_reset
+  API->>DB: UPDATE row id=1
+  ESP->>API: GET /control wifi_reset
+  API->>ESP: json wi-fi-reset flag

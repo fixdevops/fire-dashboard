@@ -1,0 +1,15 @@
+flowchart TD
+  A([Start / loop]) --> B{Baca sensor pin 34}
+  B --> C{Filter noise threshold}
+  C -->|Api| D[Relay ON alarm nozzle ikut sudut]
+  C -->|Aman| E[Relay OFF scan servo simetris]
+  D --> F{Interval kirim Supabase}
+  E --> F
+  F -->|Ya| G[POST fire_logs]
+  F -->|Tidak| H{Poll wifi_reset}
+  G --> H
+  H -->|True| I[Reset WiFiManager restart]
+  H -->|False| J[Reconnect WiFi jika putus]
+  I --> K([delay yield])
+  J --> K
+  K --> A

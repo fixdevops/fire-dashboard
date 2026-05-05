@@ -1,0 +1,10 @@
+flowchart TD
+  P([Buka URL Vercel]) --> E{Env Supabase valid}
+  E -->|Ya| L[fetch fire_logs terbaru]
+  L --> M[Subscribe Realtime fire_logs]
+  M --> N[Tampilkan servo api relay log]
+  N --> O{User ubah kontrol}
+  O -->|Toggle pompa slider| P2[PATCH control]
+  O -->|Reset WiFi| P2
+  P2 --> Q[(Supabase control)]
+  E -->|Tidak| R[Error / kosong]

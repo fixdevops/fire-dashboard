@@ -1,0 +1,28 @@
+flowchart TB
+  subgraph MCU [ESP32 DevKit]
+    CPU[CPU + WiFi + PWM]
+  end
+  subgraph IN [Masukan]
+    FL[Sensor flame GPIO34]
+  end
+  subgraph OUT [Keluaran]
+    RLY[Relay pompa GPIO27]
+    LED[LED GPIO2]
+    BZ[Buzzer GPIO14]
+    SV1[Servo scan GPIO13]
+    SV2[Servo nozzle GPIO12]
+  end
+  subgraph PWR [Catu]
+    V5[5V servo relay]
+    V3[3V3 logic]
+  end
+  CPU --> FL
+  CPU --> RLY
+  CPU --> LED
+  CPU --> BZ
+  CPU --> SV1
+  CPU --> SV2
+  V5 --> SV1
+  V5 --> SV2
+  V5 --> RLY
+  V3 --> CPU

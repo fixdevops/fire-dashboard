@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Laporan — Fire Fighter System Monitor</title>
+  <style>
+    @page { size: A4; margin: 18mm; }
+    body {
+      font-family: "Segoe UI", Arial, sans-serif;
+      line-height: 1.5;
+      color: #222;
+      max-width: 210mm;
+      margin: 0 auto;
+      padding: 12px 20px 40px;
+      font-size: 11pt;
+    }
+    h1 { font-size: 1.6rem; border-bottom: 2px solid #333; padding-bottom: 6px; }
+    h2 { font-size: 1.2rem; margin-top: 1.4em; color: #1a1a1a; }
+    h3 { font-size: 1.05rem; margin-top: 1em; }
+    table { border-collapse: collapse; width: 100%; margin: 10px 0; font-size: 10pt; }
+    th, td { border: 1px solid #ccc; padding: 6px 8px; text-align: left; vertical-align: top; }
+    th { background: #f0f4f8; }
+    figure { margin: 14px 0; text-align: center; page-break-inside: avoid; }
+    figcaption { font-size: 9pt; color: #555; margin-top: 6px; text-align: left; }
+    img { max-width: 100%; height: auto; border: 1px solid #ddd; }
+    .subtitle { color: #444; margin-top: -8px; }
+    .toc a { color: #0b57d0; text-decoration: none; }
+    code { background: #f5f5f5; padding: 1px 4px; border-radius: 3px; font-size: 0.92em; }
+    @media print {
+      body { padding: 0; }
+      a { color: #000; text-decoration: none; }
+    }
+  </style>
+</head>
+<body>
+
+  <h1>Fire Fighter System Monitor</h1>
+  <p class="subtitle"><strong>Laporan dokumentasi proyek lengkap</strong> — IoT · ESP32 · Supabase · Next.js · Vercel</p>
+  <p><strong>Penyusunan:</strong> 2026</p>
+
+  <h2>Daftar isi</h2>
+  <ol class="toc">
+    <li><a href="#pendahuluan">Pendahuluan</a></li>
+    <li><a href="#rumusan">Rumusan masalah dan tujuan</a></li>
+    <li><a href="#komponen">Tinjauan komponen hardware &amp; software</a></li>
+    <li><a href="#arsitektur">Arsitektur sistem</a></li>
+    <li><a href="#alur">Alur data (end-to-end)</a></li>
+    <li><a href="#esp">Cara kode berjalan — firmware ESP32</a></li>
+    <li><a href="#loop">Diagram alur loop ESP32</a></li>
+    <li><a href="#web">Cara kode berjalan — dashboard Next.js</a></li>
+    <li><a href="#userflow">Alur pengguna membuka dashboard</a></li>
+    <li><a href="#db">Basis data Supabase</a></li>
+    <li><a href="#uji">Pengujian &amp; troubleshooting</a></li>
+    <li><a href="#simpulan">Kesimpulan &amp; saran</a></li>
+    <li><a href="#ref">Referensi</a></li>
+  </ol>
+
+  <h2 id="pendahuluan">1. Pendahuluan</h2>
+  <p>
+    Sistem deteksi kebakaran dini dan respons otomatis (misalnya aktifkan pompa) penting untuk mengurangi risiko kerugian.
+    Dengan <strong>Internet of Things (IoT)</strong>, sensor dan aktuator di lapangan dapat dipantau dari jarak jauh.
+    Proyek ini menghubungkan <strong>ESP32</strong> sebagai node lapangan, <strong>Supabase</strong> sebagai basis data dan saluran <em>realtime</em>,
+    serta aplikasi web <strong>Next.js</strong> yang di-<em>deploy</em> di <strong>Vercel</strong>.
+  </p>
+  <p>
+    Laporan menjelaskan <strong>komponen apa saja</strong> yang dipakai, <strong>alur data</strong> dari sensor hingga browser,
+    dan <strong>cara kode dijalankan</strong> pada firmware maupun frontend.
+  </p>
+
+  <h2 id="rumusan">2. Rumusan masalah dan tujuan</h2>
+  <h3>Rumusan masalah</h3>
+  <ul>
+    <li>Bagaimana data sensor/aktuator terlihat <strong>realtime</strong> di dashboard?</li>
+    <li>Bagaimana <strong>satu basis data</strong> aman untuk embedded dan browser?</li>
+    <li>Bagaimana <strong>reset WiFi</strong> ESP dapat diminta dari tanpa kabel UART?</li>
+  </ul>
+  <h3>Tujuan</h3>
+  <ol>
+    <li>Merancang firmware ESP32 dengan filter sensor dan kendali servo, relay, alarm.</li>
+    <li>Mengintegrasikan penyimpanan &amp; realtime dengan Supabase.</li>
+    <li>Membangun antarmuka Next.js yang bereaksi terhadap perubahan data.</li>
+    <li>Mendokumentasikan arsitektur untuk akademik / pemeliharaan.</li>
+  </ol>
+
+  <h2 id="komponen">3. Tinjauan komponen</h2>
+  <h3>3.1 Komponen hardware</h3>
+  <table>
+    <thead>
+      <tr><th>No</th><th>Komponen</th><th>Fungsi</th><th>Catatan</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>1</td><td>ESP32</td><td>MCU + WiFi, jalankan firmware</td><td>Stabilkan catu &amp; GND</td></tr>
+      <tr><td>2</td><td>Sensor api (pin 34)</td><td>Deteksi api (digital)</td><td>GPIO34 input-only</td></tr>
+      <tr><td>3</td><td>Relay (pin 27)</td><td>Pompa / beban</td><td><em>Active low</em> di firmware</td></tr>
+      <tr><td>4</td><td>Servo ×2 (13, 12)</td><td>Scan &amp; nozzle</td><td>Catu 5 V terpisah cukup ampere</td></tr>
+      <tr><td>5</td><td>LED (pin 2)</td><td>Indikator</td><td>—</td></tr>
+      <tr><td>6</td><td>Buzzer (pin 14)</td><td>Alarm</td><td>—</td></tr>
+      <tr><td>7</td><td>Catu daya</td><td>5 V servo/relay, 3V3 logika</td><td><strong>GND bersama</strong></td></tr>
+    </tbody>
+  </table>
+
+  <figure id="fig-hw">
+    <img src="assets/04-hardware-blok.png" alt="Blok komponen hardware" />
+    <figcaption>Gambar 1 — Blok komponen hardware: hubungan ESP32, sensor, aktuator, dan catu.</figcaption>
+  </figure>
+
+  <h3>3.2 Komponen software</h3>
+  <table>
+    <thead>
+      <tr><th>Komponen</th><th>Peran</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Arduino Core ESP32 + WiFiManager</td><td>Firmware &amp; portal WiFi</td></tr>
+      <tr><td>ESP32Servo</td><td>PWM servo</td></tr>
+      <tr><td>HTTPClient</td><td>REST ke Supabase</td></tr>
+      <tr><td>Supabase</td><td>PostgreSQL, PostgREST, Realtime</td></tr>
+      <tr><td>Next.js 16 / React 19</td><td>UI dashboard</td></tr>
+      <tr><td>Supabase JS</td><td>Query + subscription</td></tr>
+      <tr><td>Vercel</td><td>Hosting web</td></tr>
+    </tbody>
+  </table>
+
+  <h2 id="arsitektur">4. Arsitektur sistem</h2>
+  <p>Seluruh komunikasi melewati <strong>Supabase</strong>. ESP tidak memanggil domain Vercel; browser dan ESP sama-sama memakai URL &amp; kunci project Supabase.</p>
+  <figure>
+    <img src="assets/01-arsitektur.png" alt="Arsitektur sistem" />
+    <figcaption>Gambar 2 — Arsitektur: ESP32 ↔ Supabase ↔ Browser (Next.js di Vercel).</figcaption>
+  </figure>
+
+  <h2 id="alur">5. Alur data (end-to-end)</h2>
+  <p>Urutan pesan saat log masuk dan saat kontrol/reset WiFi lewat tabel <code>control</code>:</p>
+  <figure>
+    <img src="assets/02-alur-data.png" alt="Sequence diagram alur data" />
+    <figcaption>Gambar 3 — Diagram urutan: POST fire_logs, Realtime ke browser, GET/PATCH control.</figcaption>
+  </figure>
+  <ol>
+    <li>ESP <strong>POST</strong> JSON ke <code>/rest/v1/fire_logs</code>.</li>
+    <li>Baris tersimpan; Realtime mendorong ke klien yang berlangganan.</li>
+    <li>Browser memperbarui state UI (sudut, api, relay, log).</li>
+    <li>Untuk reset WiFi: UI <strong>PATCH</strong> <code>control</code>; ESP <strong>GET</strong> periodik memeriksa <code>wifi_reset</code>.</li>
+  </ol>
+
+  <h2 id="esp">6. Cara kode berjalan — firmware ESP32</h2>
+  <p>Berkas: <code>esp32_fire_system.ino</code>.</p>
+  <h3><code>setup()</code></h3>
+  <ul>
+    <li>Inisialisasi pin, servo (kalibrasi PWM), posisi awal tengah.</li>
+    <li>WiFiManager membuka hotspot konfigurasi (mis. SSID <code>FIRE_SYSTEM_FIKRI</code>) bila perlu.</li>
+  </ul>
+  <h3><code>loop()</code></h3>
+  <ul>
+    <li>Reconnect WiFi jika putus (periodik).</li>
+    <li>Baca sensor + filter <em>threshold</em>.</li>
+    <li>Mode api: relay ON, alarm terjadwal, nozzle ikut sudut; mode aman: relay OFF, servo scan simetris dengan pembatasan frekuensi tulis PWM.</li>
+    <li>POST <code>fire_logs</code> pada interval.</li>
+    <li>Poll <code>wifi_reset</code> pada <code>control</code>.</li>
+    <li><code>yield()</code> + <code>delay</code> kecil agar stack WiFi stabil.</li>
+  </ul>
+
+  <h2 id="loop">7. Diagram alur utama loop ESP32</h2>
+  <figure>
+    <img src="assets/03-loop-esp.png" alt="Flowchart loop ESP32" />
+    <figcaption>Gambar 4 — Keputusan utama dalam loop firmware (ringkasan).</figcaption>
+  </figure>
+
+  <h2 id="web">8. Cara kode berjalan — dashboard (Next.js)</h2>
+  <p>Berkas utama: <code>app/page.tsx</code> (<em>client component</em>).</p>
+  <ul>
+    <li>Saat <em>mount</em>: fetch baris terbaru <code>fire_logs</code>, fetch log terkini, subscribe Realtime.</li>
+    <li>Interaksi: toggle/slider memanggil <code>PATCH</code> ke <code>control?id=eq.1</code>; tombol reset mengirim <code>wifi_reset</code>.</li>
+    <li>Status "perangkat online" memakai usia <code>created_at</code> data terakhir (bukan ping WiFi langsung).</li>
+  </ul>
+
+  <h2 id="userflow">9. Alur pengguna membuka dashboard</h2>
+  <figure>
+    <img src="assets/05-dashboard-flow.png" alt="Alur pengguna dashboard" />
+    <figcaption>Gambar 5 — Alur pengguna dari membuka URL hingga aksi kontrol.</figcaption>
+  </figure>
+
+  <h2 id="db">10. Basis data Supabase</h2>
+  <ul>
+    <li><strong>fire_logs:</strong> histori pengukuran (<code>flame</code>, <code>relay</code>, <code>angle</code>, <code>created_at</code>, dll.).</li>
+    <li><strong>control:</strong> biasanya satu baris (<code>id=1</code>) untuk perintah UI, termasuk <code>wifi_reset</code>.</li>
+    <li><strong>RLS:</strong> policy harus mengizinkan operasi yang dipakai kunci anon sesuai kebijakan Anda.</li>
+  </ul>
+
+  <h2 id="uji">11. Pengujian &amp; troubleshooting</h2>
+  <table>
+    <thead>
+      <tr><th>Gejala</th><th>Kemungkinan</th><th>Tindakan</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>401 dari ESP</td><td>URL/key salah</td><td>Salin anon key &amp; URL satu project</td></tr>
+      <tr><td>Insert ditolak</td><td>RLS</td><td>Policy INSERT/SELECT</td></tr>
+      <tr><td>UI tidak live</td><td>Realtime</td><td>Aktifkan replikasi tabel untuk Realtime</td></tr>
+      <tr><td>Servo bergemetar</td><td>Catu lemah</td><td>Catu 5 V terpisah, GND bersama</td></tr>
+    </tbody>
+  </table>
+
+  <h2 id="simpulan">12. Kesimpulan &amp; saran</h2>
+  <p>
+    Sistem mengintegrasikan ESP32, Supabase, dan Next.js melalui pola <strong>pusat data tunggal</strong>. Firmware bekerja dalam <strong>loop waktu-nyata</strong> dengan tugas jaringan terjadwal;
+    aplikasi web <strong>reaktif</strong> terhadap peristiwa basis data.
+  </p>
+  <p><strong>Saran:</strong> kolom <code>device_id</code> untuk multi-board; firmware membaca <code>control</code> agar kontrol web sama dengan hardware; autentikasi untuk produksi.</p>
+
+  <h2 id="ref">13. Referensi</h2>
+  <ul>
+    <li>Next.js — https://nextjs.org/docs</li>
+    <li>Supabase — https://supabase.com/docs</li>
+    <li>ESP32 Arduino, WiFiManager, dokumentasi servo PWM.</li>
+  </ul>
+
+  <hr />
+  <p style="font-size:9pt;color:#666;">Dokumen ini dapat dicetak ke PDF dari browser (Ctrl+P → Simpan sebagai PDF) atau dihasilkan dengan Chrome headless dari repositori proyek.</p>
+
+</body>
+</html>

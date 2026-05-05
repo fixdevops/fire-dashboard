@@ -1,0 +1,22 @@
+flowchart LR
+  subgraph HW [Lapangan]
+    ESP[ESP32]
+    SEN[Sensor api]
+    SERV[Servo x2]
+    REL[Relay pompa]
+    ESP --> SEN
+    ESP --> SERV
+    ESP --> REL
+  end
+  subgraph CLOUD [Supabase]
+    DB[(PostgreSQL)]
+    RT[Realtime]
+    DB --- RT
+  end
+  subgraph WEB [Vercel]
+    UI[Next.js Dashboard]
+  end
+  ESP -->|HTTPS POST fire_logs| DB
+  ESP -->|GET/PATCH control| DB
+  UI -->|REST + Realtime| RT
+  RT -->|postgres_changes| UI
